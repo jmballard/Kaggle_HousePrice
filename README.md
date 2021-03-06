@@ -5,7 +5,6 @@ The House Price competition from Kaggle
 - train.csv - the training set
 - test.csv - the test set
 - data_description.txt - full description of each column, originally prepared by Dean De Cock but lightly edited to match the column names used here
-- sample_submission.csv - a benchmark submission from a linear regression on year and month of sale, lot square footage, and number of bedrooms
 
 ### Data fields
 Here's a brief version of what you'll find in the data description file.
@@ -92,3 +91,33 @@ Here's a brief version of what you'll find in the data description file.
 - SaleCondition: Condition of sale
 
 ## Analysis
+
+### Step 1: Check the format of the dataset
+
+We note that 19 columns have missing data. By decreasing percentage of NA:
+
+- PoolQC is pool quality, where NA means no pool. We need to keep it even with 99% of NAs. It is an ordered factor
+- MiscFeature is Misc features of the house, and is probably not interesting (96% NA)
+- Alley is the type of alley to the house. NA is not any alley. We keep it (93% NA)
+- Fence is the type of Fence. Na is no fence. We keep it (80% missing). It is an ordered factor
+- FireplaceQu  is Fireplace quality, where NA means no fireplace.We keep it(47% NA). It is an ordered factor
+- LotFrontage. Linear feet of street connected to property. Keep, replace NA by median.
+- GarageXXX. Garage related data, where NA is no garage. Keep, replace NA with lower values. ordered factors
+- BsmtXXX. Basement related data, where NA is no basement. Keep, replace NA with lower values. ordered factors
+- BsmtExposure has 1 more missing value than the other Bsmt columns. May need to replace it
+- MasVnrXXX. Masonry veneer related data, where NA is no Masonry veneer. Keep, replace NA with lower values. ordered factors
+- Electrical. Only one missing value, replacing it with "SBrkr" as it's the most common value.
+
+On top of that, we have:
+- Street has 6/1460 Gravel and the rest Pavement. May not be useful, but after looking at the boxplot we see that it may be a good idea to keep it for now.
+- Utilities has 1/1460 NoSeWa, the rest AllPub. Not useful, we remove it.
+- MasVnrArea and BsmtFinSF1 have some outliers
+- BsmtFinSF2 and LowQualFinSF have nearly only 0's. May not be useful. We will remove them.
+
+
+Finally, some numerical variables may be a good idea to transform into categories, and inversely for some categories.
+
+We will remove the following columns: Utilities, LandSlope, Fence, and MiscFeature,BsmtFinSF2,LowQualFinSF
+
+
+### Step 2: Pre-processing of the datasets
