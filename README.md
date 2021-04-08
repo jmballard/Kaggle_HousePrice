@@ -1,123 +1,146 @@
 # Kaggle_HousePrice
 The House Price competition from Kaggle
 
+## Pre-analysis
+
 ### File descriptions
 - train.csv - the training set
 - test.csv - the test set
 - data_description.txt - full description of each column, originally prepared by Dean De Cock but lightly edited to match the column names used here
 
 ### Data fields
-Here's a brief version of what you'll find in the data description file.
+See "data_description.txt" file for more details on the columns
 
-- SalePrice - the property's sale price in dollars. This is the target variable that you're trying to predict.
-- MSSubClass: The building class
-- MSZoning: The general zoning classification
-- LotFrontage: Linear feet of street connected to property
-- LotArea: Lot size in square feet
-- Street: Type of road access
-- Alley: Type of alley access
-- LotShape: General shape of property
-- LandContour: Flatness of the property
-- Utilities: Type of utilities available
-- LotConfig: Lot configuration
-- LandSlope: Slope of property
-- Neighborhood: Physical locations within Ames city limits
-- Condition1: Proximity to main road or railroad
-- Condition2: Proximity to main road or railroad (if a second is present)
-- BldgType: Type of dwelling
-- HouseStyle: Style of dwelling
-- OverallQual: Overall material and finish quality
-- OverallCond: Overall condition rating
-- YearBuilt: Original construction date
-- YearRemodAdd: Remodel date
-- RoofStyle: Type of roof
-- RoofMatl: Roof material
-- Exterior1st: Exterior covering on house
-- Exterior2nd: Exterior covering on house (if more than one material)
-- MasVnrType: Masonry veneer type
-- MasVnrArea: Masonry veneer area in square feet
-- ExterQual: Exterior material quality
-- ExterCond: Present condition of the material on the exterior
-- Foundation: Type of foundation
-- BsmtQual: Height of the basement
-- BsmtCond: General condition of the basement
-- BsmtExposure: Walkout or garden level basement walls
-- BsmtFinType1: Quality of basement finished area
-- BsmtFinSF1: Type 1 finished square feet
-- BsmtFinType2: Quality of second finished area (if present)
-- BsmtFinSF2: Type 2 finished square feet
-- BsmtUnfSF: Unfinished square feet of basement area
-- TotalBsmtSF: Total square feet of basement area
-- Heating: Type of heating
-- HeatingQC: Heating quality and condition
-- CentralAir: Central air conditioning
-- Electrical: Electrical system
-- 1stFlrSF: First Floor square feet
-- 2ndFlrSF: Second floor square feet
-- LowQualFinSF: Low quality finished square feet (all floors)
-- GrLivArea: Above grade (ground) living area square feet
-- BsmtFullBath: Basement full bathrooms
-- BsmtHalfBath: Basement half bathrooms
-- FullBath: Full bathrooms above grade
-- HalfBath: Half baths above grade
-- Bedroom: Number of bedrooms above basement level
-- Kitchen: Number of kitchens
-- KitchenQual: Kitchen quality
-- TotRmsAbvGrd: Total rooms above grade (does not include bathrooms)
-- Functional: Home functionality rating
-- Fireplaces: Number of fireplaces
-- FireplaceQu: Fireplace quality
-- GarageType: Garage location
-- GarageYrBlt: Year garage was built
-- GarageFinish: Interior finish of the garage
-- GarageCars: Size of garage in car capacity
-- GarageArea: Size of garage in square feet
-- GarageQual: Garage quality
-- GarageCond: Garage condition
-- PavedDrive: Paved driveway
-- WoodDeckSF: Wood deck area in square feet
-- OpenPorchSF: Open porch area in square feet
-- EnclosedPorch: Enclosed porch area in square feet
-- 3SsnPorch: Three season porch area in square feet
-- ScreenPorch: Screen porch area in square feet
-- PoolArea: Pool area in square feet
-- PoolQC: Pool quality
-- Fence: Fence quality
-- MiscFeature: Miscellaneous feature not covered in other categories
-- MiscVal: $Value of miscellaneous feature
-- MoSold: Month Sold
-- YrSold: Year Sold
-- SaleType: Type of sale
-- SaleCondition: Condition of sale
+
 
 ## Analysis
 
 ### Step 1: Check the format of the dataset
 
+#### 1.0 ID column
+
+We remove the ID column from the training dataset. Shouldn't have any impact.
+
+
+#### 1.1 Log transform target
+We can see that the SalePrice column has a right tail. We will log the predictions to have a normal distributed target.
+
+
+#### 1.2 Missing dataset
 We note that 19 columns have missing data. By decreasing percentage of NA:
 
-- PoolQC is pool quality, where NA means no pool. We need to keep it even with 99% of NAs. It is an ordered factor
-- MiscFeature is Misc features of the house, and is probably not interesting (96% NA)
-- Alley is the type of alley to the house. NA is not any alley. We keep it (93% NA)
-- Fence is the type of Fence. Na is no fence. We keep it (80% missing). It is an ordered factor
-- FireplaceQu  is Fireplace quality, where NA means no fireplace.We keep it(47% NA). It is an ordered factor
-- LotFrontage. Linear feet of street connected to property. Keep, replace NA by median.
-- GarageXXX. Garage related data, where NA is no garage. Keep, replace NA with lower values. ordered factors
-- BsmtXXX. Basement related data, where NA is no basement. Keep, replace NA with lower values. ordered factors
-- BsmtExposure has 1 more missing value than the other Bsmt columns. May need to replace it
-- MasVnrXXX. Masonry veneer related data, where NA is no Masonry veneer. Keep, replace NA with lower values. ordered factors
-- Electrical. Only one missing value, replacing it with "SBrkr" as it's the most common value.
+- PoolQC is pool quality, where NA means no pool. It is an ordered factor with 99% of NAs. It seems to have an impact on the sale price. We keep it
+- Alley is the type of alley to the house. NA is not any alley. We keep it (93% NA) but change the factor to be "With" / "Without".
+- Fence is the type of Fence. Na is no fence. We keep it (80% missing). It is an ordered factor but add "No" as a level in the factor
+- FireplaceQu  is Fireplace quality, where NA means no fireplace.We keep it(47% NA). It is an ordered factor, add "No" as a level in the factor
+- LotFrontage. Linear feet of street connected to property. We keep it, we fill with knn
+- GarageXXX. Garage related data, where NA is no garage. We keep its. ordered factors, we fill with knn
+- BsmtXXX. Basement related data, where NA is no basement. We keep it. ordered factors, we fill with knn
+- Electrical. Only one missing value due to error, we fill with knn
 
-On top of that, we have:
-- Street has 6/1460 Gravel and the rest Pavement. May not be useful, but after looking at the boxplot we see that it may be a good idea to keep it for now.
-- Utilities has 1/1460 NoSeWa, the rest AllPub. Not useful, we remove it.
-- MasVnrArea and BsmtFinSF1 have some outliers
-- BsmtFinSF2 and LowQualFinSF have nearly only 0's. May not be useful. We will remove them.
+We remove the colums MiscFeature, add another level for Alley, PoolQC, Fence and FireplaceQu and use knn_input to fill the other missing dataset.
+
+We look at the Fence column, as it contains 2 details: the quality of privacy and quality of wood.
 
 
-Finally, some numerical variables may be a good idea to transform into categories, and inversely for some categories.
 
-We will remove the following columns: Utilities, LandSlope, Fence, and MiscFeature,BsmtFinSF2,LowQualFinSF
+#### 1.3 Distribution of categorical values
+
+By looking at the categorical variables, we see that 7 of them have a category that will take >95% of the rows. We remove them from the features, but only 1 has no impact on the Sale Price:  "Utilities".
+
+
+
+
+#### 1.4 Distribution of numerical values
+
+While looking at the distribution of numerical variables, we found that some variables should be in fact factors and not numerical variables.
+
+Some of them can be removed because they have one of the variable that contains > 95% of the data and the impact on Sale price is small:
+
+- 3SsnPorch
+- BsmtHalfBath
+- PoolArea
+- KitchenAbvGr
+- LowQualFinSF
+- MiscVal
+
+
+
+#### 1.5 Factor to numerical
+
+Some of the columns that are factors could be seen as numerical: 
+
+- all the "Cond" columns (Except SaleCondition and ConditionX), noting the condition of some aspect of a house
+- all the "Qual" and "QC" columns, noting the quality of some aspect of a house
+- BsmtExposure, BsmtFinType1 and BsmtFinType2 are specific columns that are similar
+
+
+
+
+#### 1.6 Numerical to factor
+
+Some of the columns that are numericals could be seen as factors instead:
+- BsmtFullBath, Fireplaces, FullBath, and HalfBath will count some aspect of a house
+- MoSold, YrSold will give details when the house has been sold.
+
+
+#### 1.7 'Other' level for factors with levels that are "too low"
+
+In all the factors except the one we talked about before this section, we create a new level "other" for all categories that have < 10% of data.
+
+The full list is:
+
+- MSZoning
+- Street
+- LotShape
+- LandContour
+- LotConfig
+- LandSlope
+- Neighborhood
+- Condition1
+- Condition2
+- BldgType
+- HouseStyle
+- RoofStyle
+- RoofMatl
+- Exterior1st
+- Exterior2nd
+- MasVnrType
+- Foundation
+- BsmtCond
+- Heating
+- CentralAir
+- Electrical
+- Functional
+- GarageType
+- PavedDrive
+- SaleType
+- SaleCondition"
+
+
+#### 1.8 Center and Scale the numerical values
+
+We center and Scale the numerical values, except the output.
+It will help with the columns with outliers
+
+
 
 
 ### Step 2: Pre-processing of the datasets
+
+We pre-process the dataset following chapter 1 above, then create dummy variables from all the factors left.
+
+
+### Step 3: XGBoost and workflow
+
+
+### Step 4: Predicting on Test file
+
+For future version, to add:
+
+- step_ordinalscore() to replace ordered factors first, before the dummy step
+- step_pca() for some pca
+- step_novel(all_categories) in case we have new categories in the test file 
+- step_interact( ~ x1:x2)  to add interactions
+
+
