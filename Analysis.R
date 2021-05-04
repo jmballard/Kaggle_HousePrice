@@ -5,6 +5,7 @@ library(tidyverse)
 library(tidymodels)
 library(data.table)
 library(vip)
+library(xgboost)
 
 # avoid scientific notation
 options(scipen=999)
@@ -108,6 +109,8 @@ caret::nearZeroVar(train, saveMetrics = TRUE) %>%
   filter(nzv) %>%
   arrange(-freqRatio)
 
+nzv_variables <- c("Utilities","LowQualFinSF" ,"RoofMatl",
+                   "BsmtFinSF2", "Street"  ,"Condition2"  ,"ScreenPorch")
 
 # Check the boxplot of the variables that have one variable with > 95% of the rows
 train %>%
@@ -122,7 +125,7 @@ train %>%
   geom_boxplot(aes(Category, SalePrice)) +
   facet_wrap(~Variable, scales = "free")
 
-# we remove only the column "Utilities"
+# we remove all the variables with near-zero variance
 
 
 # 1.4 Distribution of numerical variables -------------------------------------
@@ -140,8 +143,8 @@ ggplot(numeric_distrib) +
   facet_wrap(~column2, scales = "free")
 
 # Look at the ones that could be removed:
-numerical_interest <- c("3SsnPorch","BsmtHalfBath","PoolArea",
-                        "KitchenAbvGr","LowQualFinSF","MiscVal")
+numerical_interest <- c("3SsnPorch","PoolArea","BsmtHalfBath",
+                        "KitchenAbvGr","MiscVal")
 
 # boxplot against SalePrice
 train %>%
@@ -212,10 +215,10 @@ num_to_cat3 <- c( "YrSold")
 
 # 1.7 Factor columns that have many small levels ------------------------------
 
-factors_other <- c("MSZoning","Street","LotShape","LandContour",
+factors_other <- c("MSZoning","LotShape","LandContour",
                    "LotConfig","LandSlope","Neighborhood" ,
-                   "Condition1", "Condition2","BldgType","HouseStyle",
-                   "RoofStyle","RoofMatl","Exterior1st","Exterior2nd",
+                   "Condition1","BldgType","HouseStyle",
+                   "RoofStyle","Exterior1st","Exterior2nd",
                    "MasVnrType", "Foundation","BsmtCond","Heating", "CentralAir",
                    "Electrical","Functional","GarageType","PavedDrive",
                    "SaleType","SaleCondition")
@@ -273,7 +276,7 @@ myrecipe <- recipe(SalePrice ~ .,
                    data = train %>%
                      select(-c(Id, # not needed in model
                                MiscFeature, # from missing data
-                               Utilities, # from categorical check
+                               all_of(nzv_variables), # from near-zero variance check
                                all_of(numerical_interest), # from numerical check
                      ))) %>%
   step_log(all_outcomes()) %>% # we log-transform it
@@ -313,9 +316,9 @@ myrecipe <- recipe(SalePrice ~ .,
   step_other(all_of(factors_other),
              threshold = 0.1,
              other = "other")  %>% # we add the "other" category for all small categories
-  step_num2factor(all_of(num_to_cat1),
-                  transform = function(x) x+1, # Factor values can't be zero.
-                  levels = as.character(0:4)) %>%
+  # step_num2factor(all_of(num_to_cat1),
+  #                 transform = function(x) x+1, # Factor values can't be zero.
+  #                 levels = as.character(0:4)) %>%
   step_num2factor(all_of(num_to_cat2),
                   levels = as.character(1:12)) %>%
   step_num2factor(all_of(num_to_cat3),
@@ -323,7 +326,8 @@ myrecipe <- recipe(SalePrice ~ .,
                   levels = as.character(2006:2010)) %>%
   step_center(all_numeric(), - all_outcomes()) %>% # to standardize the dataset
   step_scale(all_numeric(), -all_outcomes()) %>%
-  step_integer(all_of(cat_to_num)) %>%
+  step_integer(all_of(cat_to_num))  %>% 
+  # step_zv(all_predictors()) %>%
   step_dummy(all_nominal(),
              one_hot = TRUE) # replace all other categoricals by numericals with a one-hot encoder
 
@@ -344,18 +348,20 @@ myprep <-  prep(myrecipe,
 
 # 3 Training Models ===========================================================
 
+
+#Display currently available engines for xgboost
+show_engines("boost_tree")
+
 # initialisation of a xgboost
 myxgb <- boost_tree( trees = 100, 
                      tree_depth = tune(),
-                     min_n = tune(), 
-                     loss_reduction = tune(),          
-                     # sample_size = tune(), 
-                     # mtry = tune(),  
-                     learn_rate = tune())     %>%           
-  set_engine("xgboost", objective = "reg:squarederror") %>% 
+                     min_n = tune()#, 
+                     #loss_reduction = tune(), 
+                     #learn_rate = tune()
+                     )     %>%           
+  set_engine("xgboost") %>% 
   set_mode("regression")
 
-show_engines()
 
 # initialisation of workflow
 myworkflow <- workflow() %>%
@@ -370,9 +376,10 @@ vb_folds <- myprep %>%
 
 # initialisation of grid search
 xgb_grid <- dials::grid_max_entropy( dials::parameters( tree_depth(),
-                                                        min_n(),
-                                                        loss_reduction(),
-                                                        learn_rate()   ), 
+                                                        min_n()#,
+                                                        #loss_reduction(),
+                                                        #learn_rate()  
+                                                        ), 
                                      size = 60  )
 
 
@@ -399,48 +406,71 @@ set.seed(234)
 xgb_res <- tune_grid( myworkflow,
                       resamples = vb_folds,
                       grid = xgb_grid,
+                      metrics = metric_set(rmse), #roc_auc
                       control = control_grid(save_pred = TRUE))
 
-
+# plot the results by variable tuned
 xgb_res %>%
   collect_metrics() %>%
-  filter(.metric == "roc_auc") %>%
-  select(mean, mtry:sample_size) %>%
-  pivot_longer(mtry:sample_size,
+  filter(.metric == "rmse") %>% # roc_auc
+  select(mean, min_n:tree_depth) %>%
+  pivot_longer(min_n:tree_depth,
                values_to = "value",
                names_to = "parameter"  ) %>%
   ggplot(aes(value, mean, color = parameter)) +
   geom_point(alpha = 0.8, show.legend = FALSE) +
   facet_wrap(~parameter, scales = "free_x") +
-  labs(x = NULL, y = "AUC")
+  theme_light()
 
-show_best(xgb_res, "roc_auc")
+# show the top 5 results average
+show_best(xgb_res, "rmse")
 
-best_auc <- select_best(xgb_res, "roc_auc")
+best_xgb <- select_best(xgb_res, "rmse")
 
 final_xgb <- finalize_workflow( myworkflow,
-                                best_auc)
+                                best_xgb)
 
-
+# Feature importance
 final_xgb %>%
-  fit(data = vb_train) %>% # %>% broom::tidy() # to get tidy tibble of coefficients
+  fit(data = train  ) %>% # %>% broom::tidy() # to get tidy tibble of coefficients
   pull_workflow_fit() %>%
-  vip(geom = "point")
+  vip::vip(geom = "point")
 
-final_res <- last_fit(final_xgb, vb_split)
+
+# Let’s use last_fit() to fit our model one last time on the training data 
+# and evaluate our model one last time on the testing set.
+final_res <- last_fit(final_xgb, 
+                      initial_split(train))
 
 collect_metrics(final_res)
 
 final_res %>%
   collect_predictions() %>%
-  roc_curve(win, .pred_win) %>%
-  ggplot(aes(x = 1 - specificity, y = sensitivity)) +
-  geom_line(size = 1.5, color = "midnightblue") +
-  geom_abline(
-    lty = 2, alpha = 0.5,
-    color = "gray50",
-    size = 1.2
-  )
+  ggplot(aes(x = SalePrice,y = .pred)) +
+  geom_point(col = "darkblue", alpha = 0.3) + 
+  geom_abline( lty = 2, 
+               alpha = 0.5,
+               color = "gray50",
+               size = 1.2  ) +
+  theme_light()
+
+
+# train the model
+final_xgb <- final_xgb %>%
+  fit(data = train  )
+
+
+# # if ROC:
+# final_res %>%
+#   collect_predictions() %>%
+#   roc_curve(win, .pred_win) %>%
+#   ggplot(aes(x = 1 - specificity, y = sensitivity)) +
+#   geom_line(size = 1.5, color = "midnightblue") +
+#   geom_abline(
+#     lty = 2, alpha = 0.5,
+#     color = "gray50",
+#     size = 1.2
+#   )
 
 # 4 Testing ===================================================================
 
@@ -479,23 +509,12 @@ test_clean <- myprep %>%
   bake(test)
 
 
+test_prediction <- final_xgb %>%
+  # use the training model fit to predict the test data
+  predict(new_data = test)
 
-# test_processed  <- bake(preprocessing_recipe, new_data = testing(ames_split))
-# 
-# test_prediction <- xgboost_model_final %>%
-#   # fit the model on all the training data
-#   fit(
-#     formula = sale_price ~ ., 
-#     data    = train_processed
-#   ) %>%
-#   # use the training model fit to predict the test data
-#   predict(new_data = test_processed) %>%
-#   bind_cols(testing(ames_split))
-# 
-# # measure the accuracy of our model using `yardstick`
-# xgboost_score <- 
-#   test_prediction %>%
-#   yardstick::metrics(sale_price, .pred) %>%
-#   mutate(.estimate = format(round(.estimate, 2), big.mark = ","))
-# 
-# knitr::kable(xgboost_score)
+fwrite(data.frame(Id = test$Id,
+                  SalePrice = test_prediction$.pred),
+       "Predictions1.csv")
+
+

@@ -46,7 +46,17 @@ We look at the Fence column, as it contains 2 details: the quality of privacy an
 
 #### 1.3 Distribution of categorical values
 
-By looking at the categorical variables, we see that 7 of them have a category that will take >95% of the rows. We remove them from the features, but only 1 has no impact on the Sale Price:  "Utilities".
+By looking at the categorical variables, we see that 8 of them have a category that will take >95% of the rows:
+
+- Utilities
+- LowQualFinSF
+- RoofMatl
+- BsmtFinSF2
+- Street
+- Condition2
+- ScreenPorch
+
+We remove them from the features.
 
 
 
@@ -133,8 +143,33 @@ We pre-process the dataset following chapter 1 above, then create dummy variable
 
 ### Step 3: XGBoost and workflow
 
+We tune the hyper parameters of a XGBoost model with a Grid Search model using "grid_max_entropy".
+
+The best model is using min_n = 25 and tree_depth = 4.
+
+It has a rmse of 28927 and rsq of 0.877.
+
+The Highest feature in the feature importance check are, in order:
+
+- OverallQual, which is the variable on the Overall quality of the house
+- GrLivArea, the above grade (ground) living area square feet
+
+which both make perfect sense.
+
+
+
 
 ### Step 4: Predicting on Test file
+
+We manually make sure that the test file doesnt contain missing data when the training dataset didnt have missing value.
+
+Then, we predict the prices and submit the answers to Kaggle.
+
+The Score from Kaggle is 0.13597 of RMSE on the log(SalePrice). I ranked on the top third around 3700, but it can be improved!
+
+
+### Step 5: Improvements:
+
 
 For future version, to add:
 
@@ -142,5 +177,5 @@ For future version, to add:
 - step_pca() for some pca
 - step_novel(all_categories) in case we have new categories in the test file 
 - step_interact( ~ x1:x2)  to add interactions
-
+- Test other models
 
