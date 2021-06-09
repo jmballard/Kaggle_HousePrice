@@ -1,0 +1,1365 @@
+---
+title: "Exploratory Data Analysis"
+output: html_document
+---
+
+```{r import, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(rlang)
+library(vctrs)
+library(data.table)
+library(ggpubr)
+library(ggrepel)
+library(grid)
+library(gridExtra)
+library(vip)
+library(xgboost)
+
+test_recipe <- function(myr){
+  prep(myr, 
+       training = full_base,
+       retain = TRUE) %>%
+    juice()
+}
+
+
+add_no <- function(x, Id_skip = 9999){
+  x = as.character(x)
+  factor(case_when(is.na(x) & !full$Id %in% Id_skip ~ "No",
+                   TRUE ~ x),
+         levels = unique(c(unique(x), "No")))
+}
+
+order_qual <- function(x){
+  factor(x,
+         levels = c("No","Po","Fa","TA","Gd","Ex"))
+}
+```
+
+
+## Step 0: Import the files
+
+We import the files train.csv and test.csv, put them together to make sure they have the same levels. We will pre-process the data on the full dataset to simplify this analysis.
+
+```{r read_files}
+full <- rbind(fread("train.csv",
+                    stringsAsFactors = FALSE,
+                    data.table = FALSE),
+              fread("test.csv",
+                    stringsAsFactors = FALSE,
+                    data.table = FALSE) %>% 
+                mutate(SalePrice = as.numeric(NA))) %>%
+  mutate_if(is.character,function(x){factor(x)}) %>%
+  mutate_if(is.integer,function(x){as.numeric(x)})
+```
+
+We keep the Id column for now, but it will be removed later on.
+
+
+## Step 1: Exploring the Output column
+
+```{r output_plot1, echo=FALSE,out.width = "75%", fig.align="center"}
+ggarrange(
+  full %>%
+    filter(!is.na(SalePrice)) %>%
+    ggplot() +
+    geom_histogram(aes(SalePrice), bins = 50) +
+    ggtitle("Histogram") +
+    theme_light() +
+    theme(plot.title = element_text(hjust = 0.5)),
+  full %>%
+    filter(!is.na(SalePrice)) %>%
+    ggplot(aes(sample = SalePrice)) +
+    stat_qq()+
+    geom_qq_line(col = "blue")+
+    ylab("Sale Price quantiles")+
+    xlab("Theoretical quantiles")+
+    theme_light() +
+    ggtitle("QQ plot") +
+    theme(plot.title = element_text(hjust = 0.5)),
+  ncol = 2 ) %>%
+  annotate_figure(top = text_grob("Before Log Transform",
+                                  color = "red", 
+                                  face = "bold", 
+                                  size = 14))
+
+
+
+```
+
+
+
+We can see that the SalePrice column has a right tail. We will log the predictions to have a normal distributed target.
+
+
+```{r log_output, include=FALSE}
+full_base <- full
+myrecipe <- recipe(SalePrice ~ ., 
+                   data = full_base )
+
+myrecipe <- myrecipe %>%
+  step_log(all_outcomes())
+
+full <- test_recipe(myrecipe)
+```
+
+
+```{r output_plot2, echo=FALSE,out.width = "75%", fig.align="center"}
+ggarrange(
+  full %>%
+    filter(!is.na(SalePrice)) %>%
+    ggplot() +
+    geom_histogram(aes(SalePrice), bins = 50) +
+    ggtitle("Histogram") +
+    theme_light() +
+    theme(plot.title = element_text(hjust = 0.5)),
+  full %>%
+    filter(!is.na(SalePrice)) %>%
+    ggplot(aes(sample = SalePrice)) +
+    stat_qq()+
+    geom_qq_line(col = "blue")+
+    ylab("Sale Price quantiles")+
+    xlab("Theoretical quantiles")+
+    theme_light() +
+    ggtitle("QQ plot") +
+    theme(plot.title = element_text(hjust = 0.5)),
+  ncol = 2 ) %>%
+  annotate_figure(top = text_grob("After Log Transform",
+                                  color = "red", 
+                                  face = "bold", 
+                                  size = 14))
+
+```
+
+We see that 5 sales have very low SalePrices and 2 very high ones.
+
+After short investigation, we can see that the 5 houses with low SalePrice are very old houses (built before 1950) of below average general condition and usually with an abnormal sale condition.
+
+As for the 2 rows with very high SalePrice, they were built around 1994-6, with overall excellent condition for each check done (Garages, rooms, Kitchen, etc). One even has a pool.
+
+We do not consider these 7 profiles as outliers, and will keep them in the analysis.
+
+
+## Step 2: Missing values  {.tabset}
+
+Let's first look at the columns with missing values:
+
+
+```{r check_missing}
+missing_cols <- full %>%
+  apply(MARGIN = 2, 
+        function(x){sum(is.na(x))}) %>%
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>%
+  filter(V1 > 0) %>%
+  arrange(-V1)
+
+missing_cols
+```
+
+`r nrow(missing_cols)` predictors have missing values, and SalePrice is missing `r missing_cols[missing_cols$rowname == "SalePrice","V1"]` times, as expected. 
+
+Let's look at each of these predictors with missing variable, group by group, to try to understand the best way to fill them.
+
+
+### Pool variables
+
+PoolQC is pool quality, where NA means in theory "no pool". It is an ordered factor with `r round(sum(is.na(full$PoolQC))/nrow(full)*100,4)`% of NAs.  It is an ordered variable.
+
+There is another variable called PoolArea, for the area of the pool. When we look at the area if there is a pool or not, we see that the area is most of the time 0 if there is no pool.
+
+```{r poolarea}
+table(full$PoolArea,is.na(full$PoolQC))
+```
+
+We will add "No" as a level, and replace all NAs that have 0 as area by "No". the NAs with PoolArea>0 will be filled based on the Overall quality of the house: 
+
+- if OverallQual is <= 2, returns "Po"
+- else, if OverallQual is <= 4, returns "Fa"
+- else, if OverallQual is <= 6, returns "TA"
+- else, if OverallQual is <= 8, returns "Gd"
+- else, returns "Ex"
+
+```{r correct_poolqc ,include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( PoolQC = as.character(PoolQC),
+               Overal_fac = case_when(OverallQual <= 2 ~ "Po",
+                                      OverallQual <= 4 ~ "Fa",
+                                      OverallQual <= 6 ~ "TA",
+                                      OverallQual <= 8 ~ "Gd",
+                                      TRUE ~ "Ex"),
+               PoolQC = factor(case_when(is.na(PoolQC) &
+                                           PoolArea > 0 ~ Overal_fac,
+                                         !is.na(PoolQC) |
+                                           PoolArea > 0 ~ PoolQC,
+                                         TRUE ~ "No")))
+
+```
+
+
+
+### MiscFeature variable
+
+If we look at the variable MiscFeature, we see that `r round(sum(is.na(full$MiscFeature))/nrow(full)*100,4)`% of the values are missing. It is an unordered factor.
+
+```{r MiscFeature1}
+table(is.na(full$MiscFeature))
+```
+
+When looking at the boxplots we see that when there are values, the impact on the sold price is quite significant.
+
+```{r MiscFeature2 ,echo=FALSE,out.width = "50%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(MiscFeature,SalePrice))+
+  theme_light()
+```
+
+
+We are replacing the missing Misc features by "No".
+
+```{r MiscFeature3, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( MiscFeature = add_no(MiscFeature))
+
+```
+
+
+### Alley variable
+
+The Alley contains the type of alley to the house, where a missing value means that there is not any alley. `r round(sum(is.na(full$Alley))/nrow(full)*100,4)`% of the values are missing. It is an unordered factor.
+
+```{r Alley1}
+table(is.na(full$Alley))
+```
+
+
+```{r Alley2, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(Alley,SalePrice))+
+  theme_light()
+
+```
+
+We replace the NA by "No".
+
+
+```{r Alley3, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( Alley = add_no(Alley))
+
+```
+
+
+### Fence variable
+
+The Fence contains the type of fence around the house, where a missing value means that there is not any fence `r round(sum(is.na(full$Fence))/nrow(full)*100,4)`% of the values are missing. It is unordered.
+
+
+```{r Fence1}
+table(is.na(full$Fence))
+```
+
+
+```{r Fence2,echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(Fence,SalePrice))+
+  theme_light()
+
+```
+
+We replace the NA by "No".
+
+
+```{r Fence3, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( Fence = add_no(Fence))
+
+```
+
+
+
+
+### Fireplace variables
+
+There are 2 variables relative to the fireplaces: Fireplaces, counting the number of fireplaces, and FireplaceQu for the fireplace quality.
+
+`r round(sum(is.na(full$FireplaceQu))/nrow(full)*100,4)`% of the FireplaceQu values are missing, which correspond as seen below to the houses without any fireplaces. It is an ordered variable.
+
+```{r Fireplaces1}
+table(full$Fireplaces, is.na(full$FireplaceQu))
+```
+
+
+
+```{r Fireplaces2,echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(FireplaceQu,SalePrice))+
+  theme_light()
+```
+
+We replace the NA by "No".
+
+```{r Fireplaces3, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( FireplaceQu = add_no(FireplaceQu))
+```
+
+
+### LotFrontage variable
+
+The LotFrontage variable contains the linear feet of street connected to property. It is a numerical variable, with `r round(sum(is.na(full$LotFrontage))/nrow(full)*100,4)`% missing values.
+
+```{r LotFrontage2, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice),
+         !is.na(LotFrontage)) %>%
+  ggplot(aes(LotFrontage,SalePrice)) +
+  geom_point()+
+  geom_smooth(method='lm', formula= y~x)+
+  theme_light()
+```
+
+We fill the variable with a knn model.
+
+
+
+### Garage variables
+
+There are 7 variables related to houses' garages.
+
+GarageCars and GarageArea have 1 missing value for the observation Id 2577. This house seems to not have any garage, thus we replace the values of these 2 predictors by 0 and remove the value in GarageType.
+
+
+```{r Garage1}
+full[2577,] %>% data.frame()
+```
+
+
+```{r Garage2, include=FALSE}
+
+myrecipe <- myrecipe %>%
+  step_mutate(GarageType = as.character(GarageType),
+              GarageType = case_when(is.na(GarageArea) ~ as.character(NA),
+                                     TRUE ~ GarageType),
+              GarageType = factor(GarageType),
+              GarageArea = case_when(is.na(GarageArea) ~ 0,
+                                     TRUE ~ GarageArea),
+              GarageCars = case_when(is.na(GarageCars) ~ 0,
+                                     TRUE ~ GarageCars))
+
+full <- test_recipe(myrecipe)
+```
+
+
+
+
+In the `r round(sum(full$GarageArea == 0)/nrow(full)*100,4)`% of the rows when there is no garage, GarageCars and GarageArea are fixed to 0 and GarageType, GarageYrBlt, GarageFinish, GarageQual and GarageCond are missing. All 5 are ordered factors.
+
+There is a row with Id 2127 where GarageYrBlt, GarageFinish, GarageQual and GarageCond are missing, but GarageArea > 0 and GarageType exists. 
+
+Except for this row, the predictors GarageType, GarageFinish, GarageQual and GarageCond will be filled with a new value "No" and GarageYrBlt will be filled by the year the house was built.
+
+We will fill the row 2127 with a knn method.
+
+```{r Garage4, include=FALSE}
+
+myrecipe <- myrecipe %>%
+  step_mutate( GarageYrBlt = case_when(is.na(GarageYrBlt) & Id != 2127 ~ YearBuilt,
+                                       TRUE ~ GarageYrBlt),
+               GarageType = add_no(GarageType,Id_skip = 2127),
+               GarageFinish = add_no(GarageFinish,Id_skip = 2127),
+               GarageQual = add_no(GarageQual,Id_skip = 2127),
+               GarageCond = add_no(GarageCond,Id_skip = 2127))
+
+full <- test_recipe(myrecipe)
+```
+
+
+
+### Basement variables
+
+
+There are 11 variables related to houses' basements, and all of them have missing values with different percentages:
+
+- There are `r round(sum(is.na(full$BsmtCond))/nrow(full)*100,4)`% missing values for BsmtCond and BsmtExposure,
+- There are `r round(sum(is.na(full$BsmtQual))/nrow(full)*100,4)`% missing values for BsmtQual,
+- There are `r round(sum(is.na(full$BsmtFinType2))/nrow(full)*100,4)`% missing values for BsmtFinType2,
+- There are `r round(sum(is.na(full$BsmtFinType1))/nrow(full)*100,4)`% missing values for BsmtFinType1,
+- There are `r round(sum(is.na(full$BsmtFullBath))/nrow(full)*100,4)`% missing values for BsmtFullBath and BsmtHalfBath,
+- There are `r round(sum(is.na(full$BsmtFinSF1))/nrow(full)*100,4)`% missing values for BsmtFinSF1, BsmtFinSF2, BsmtUnfSF and TotalBsmtSF
+
+All of these predictors are either ordered factors or numerical.
+
+The row with Id 2121 is NA for all basement variables. We replace the numerical values by 0 and the factor ones by "No".
+
+The row with Id 2189 is the other one with NA for the variables related to Bathrooms in the basement. We replace them with 0.
+
+The rows with Id 2041, 2186 and 2525 contain missing values only for BsmtCond. We replace them with the values in BsmtQual, which are average.
+
+The rows with Id 949, 1488 and 2349 contain missing values only for BsmtExposure. Since for these profiles the BsmtQual and BsmtCond are average, we replace them with the "Av" value.
+
+
+All other rows, we consider that there is no basement. We replace the missing value by "No" except for BsmtExposure where we will replace it with "None" since the value "No" already exists.
+
+
+```{r Bsmt2, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate(BsmtFinSF1 = case_when(is.na(BsmtFinSF1) ~ 0,
+                                     TRUE ~ BsmtFinSF1),
+              BsmtFinSF2 = case_when(is.na(BsmtFinSF2) ~ 0,
+                                     TRUE ~ BsmtFinSF2),
+              BsmtUnfSF = case_when(is.na(BsmtUnfSF) ~ 0,
+                                    TRUE ~ BsmtUnfSF),
+              TotalBsmtSF = case_when(is.na(TotalBsmtSF) ~ 0,
+                                      TRUE ~ TotalBsmtSF),
+              BsmtFullBath = case_when(is.na(BsmtFullBath) ~ 0,
+                                       TRUE ~ BsmtFullBath),
+              BsmtHalfBath = case_when(is.na(BsmtHalfBath) ~ 0,
+                                       TRUE ~ BsmtHalfBath),
+              BsmtCond = as.character(BsmtCond),
+              BsmtQual = as.character(BsmtQual),
+              BsmtCond = case_when(is.na(BsmtCond) & !is.na(BsmtQual) ~ BsmtQual,
+                                   TRUE ~ BsmtCond),
+              BsmtQual = add_no(BsmtQual),
+              BsmtCond = add_no(BsmtCond),
+              BsmtFinType1 = add_no(BsmtFinType1),
+              BsmtFinType2 = add_no(BsmtFinType2),
+              BsmtExposure = as.character(BsmtExposure),
+              BsmtExposure = factor(case_when(is.na(BsmtExposure) & BsmtQual != "No"  ~ "Av",
+                                              BsmtQual == "No" ~ "None",
+                                              TRUE ~ BsmtExposure)))
+
+```
+
+### Masonry veneer variables
+
+There are 2 variables related to Masonry veneer: MasVnrArea and MasVnrType. The first has `r sum(is.na(full$MasVnrArea))` missing values, and the latter `r sum(is.na(full$MasVnrType))`.
+
+```{r Masonry1, echo=FALSE, fig.align="center", out.width="50%"}
+ggarrange(
+  full %>%
+    filter(!is.na(SalePrice),
+           !is.na(MasVnrType)) %>%
+    ggplot(aes(MasVnrType,SalePrice)) +
+    geom_boxplot()+
+    theme_light(),
+  full %>%
+    filter(!is.na(SalePrice),
+           !is.na(MasVnrArea)) %>%
+    ggplot(aes(MasVnrArea,SalePrice)) +
+    geom_point()+
+    geom_smooth(method='lm', formula= y~x)+
+    theme_light())
+
+```
+
+
+Row Id 2611 has a missing value for MasVnrType but not MasVnrArea. We will fill MasVnrArea with 0 and  MasVnrType with "None" for all missing values except Id 2611, and use a knn impute for this specific row.
+
+```{r Masonry2, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( MasVnrType = as.character(MasVnrType),
+               MasVnrType = factor(case_when(is.na(MasVnrArea) ~ "None",
+                                             TRUE ~ MasVnrType)),
+               MasVnrArea = case_when(is.na(MasVnrArea) ~ 0,
+                                      TRUE ~ MasVnrArea))
+```
+
+### Other variables
+
+MSZoning has 4 missing values, Utilities 2, Functional 2, Exterior1st, Exterior2nd, Electrical, KitchenQual and SaleType have 1. All of these are factors, some ordered some not.
+
+We fill these variables with a knn impute.
+
+```{r knn, include=FALSE}
+
+myrecipe <- myrecipe %>%
+  step_knnimpute(all_predictors())   %>%
+  step_mutate(PoolArea = case_when(PoolQC == "No" ~ 0,
+                                   TRUE ~ PoolArea))
+
+full <- test_recipe(myrecipe)
+```
+
+## Step 3: Change variable types  {.tabset}
+
+Some of the columns received the wrong type when reading the files: either they are written as categorical but should be numerical (and ordered), or they are numerical but should have been categoricals.
+
+### Categoricals to Numericals
+
+Most of the factors (MSZoning, Street, LandContour, ...) are unordered factors and be kept as factors.
+
+LotShape is a categorical variable containing the general shape of the property. It is ordered, and "Reg" is the highest value. We replace the value with Reg = 0, IR1 = 1, IR2 = 2 and IR3 = 3.
+
+```{r cat_to_num1}
+table(full$LotShape)
+```
+
+```{r cat_to_num2, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(LotShape,SalePrice))+
+  theme_light()
+```
+
+LandSlope is a categorical variable containing the slope of the property. It is ordered, and the levels are currently ordered correctly, thus we will translate the factor into the order of the levels.
+
+```{r cat_to_num3}
+table(full$LandSlope)
+```
+
+```{r cat_to_num4, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(LandSlope,SalePrice))+
+  theme_light()
+```
+
+ExterQual, ExterCond, BsmtQual, BsmtCond, HeatingQC, KitchenQual, FireplaceQu, GarageQual, GarageCond, PoolQC are all ordered variables with the same ordered levels: Ex, Gd, TA, Fa, Po, No. We re-order all the levels to be in this order, and then translate these factors into the order of the levels (aka Ex = 0, Gd = 1, ...)
+
+```{r cat_to_num5, echo=FALSE, fig.align="center", out.width="100%"}
+cat_to_num <- c( "ExterQual","BsmtQual","KitchenQual","GarageQual",
+                 "ExterCond","BsmtCond","GarageCond" ,"HeatingQC","PoolQC",
+                 "FireplaceQu")
+
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  select_at(all_of(c(cat_to_num,"SalePrice"))) %>%
+  pivot_longer(cols = -SalePrice,
+               names_to = "variables",
+               values_to = "values") %>%
+  ggplot() +
+  geom_boxplot(aes(values, SalePrice)) +
+  facet_wrap(~factor(variables), scales = "free_x") +
+  theme_light()
+```
+
+
+BsmtExposure is an ordered variable with slightly different levels than the ones we worked on just before. We re-order the levels in the order Gd - Av - Mn - No - None.
+
+```{r cat_to_num6, echo=FALSE, fig.align="center", out.width="50%"}
+ggplot(full %>%
+         filter(!is.na(SalePrice)) %>%
+         mutate(BsmtExposure = factor(BsmtExposure,
+                                      levels = c("Gd","Av","Mn","No","None")))) +
+  geom_boxplot(aes(BsmtExposure,SalePrice))+
+  theme_light()
+```
+
+
+BsmtFinType1 and BsmtFinType2 are 2 ordered variables with specific levels. We re-order the levels in the order: GLQ, ALQ, BLQ, Rec, LwQ, Unf, No.
+
+```{r cat_to_num7, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(BsmtFinType1,SalePrice))+
+  theme_light()
+
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot() +
+  geom_boxplot(aes(BsmtFinType2,SalePrice))+
+  theme_light()
+```
+
+
+Functional is an ordered variable containing the home functionality.
+
+```{r cat_to_num8}
+table(full$Functional)
+```
+
+Due to the low volume in the different categories, we bin them together:
+
+- "Typ" will contain the typical functionality
+- "Min" will contain deductions from minor to moderate
+- "Maj" will contain major / sever damages.
+
+```{r cat_to_num9, echo=FALSE, fig.align="center", out.width="50%"}
+ggplot(full %>%
+         filter(!is.na(SalePrice)) %>%
+         mutate(Functional = as.character(Functional),
+                Functional = case_when(Functional %in% c("Min1","Min2", "Mod") ~ "Min",
+                                       Functional == "Typ" ~ "Typ",
+                                       TRUE ~ "Maj"),
+                Functional = factor(Functional,
+                                    levels = c("Typ","Min","Maj"))),
+       aes(Functional,SalePrice)) +
+  geom_boxplot()+
+  theme_light()
+```
+
+
+GarageFinish is an ordered variable containing the interior finish of the garage(s). We re-organise the levels to have No = 0, Unf = 1, RFn = 2, Fin = 3.
+
+```{r cat_to_num10}
+table(full$GarageFinish)
+```
+
+```{r cat_to_num11, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot(aes(GarageFinish,SalePrice))+
+  geom_boxplot()+
+  theme_light()
+```
+
+
+
+PavedDrive is an ordered variable containing the definition of how paved is the driveway. We re-organise the levels to have "N" = 0, "P" = 1, "Y" = 2.
+
+```{r cat_to_num12}
+table(full$PavedDrive)
+```
+
+```{r cat_to_num13, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot(aes(PavedDrive,SalePrice))+
+  geom_boxplot()+
+  theme_light()
+```
+
+
+
+```{r cat_to_num14, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_mutate( LotShape = factor(LotShape,
+                                 levels = c("Reg","IR1","IR2","IR3")),
+               BsmtExposure = factor(BsmtExposure,
+                                     levels = c("Gd","Av","Mn","No","None")),
+               BsmtFinType1 = factor(BsmtFinType1,
+                                     levels = c("No","Unf","LwQ","Rec",
+                                                "BLQ","ALQ","GLQ")),
+               BsmtFinType2 = factor(BsmtFinType2,
+                                     levels = c("No","Unf","LwQ","Rec",
+                                                "BLQ","ALQ","GLQ")),
+               GarageFinish = factor(GarageFinish,
+                                     levels = c("No","Unf","RFn","Fin")),
+               PavedDrive = factor(PavedDrive,
+                                   levels = c("N","P","Y"))) %>%
+  step_mutate_at(all_of(cat_to_num),
+                 fn = order_qual) %>%
+  step_integer(all_of(cat_to_num))  %>%
+  step_mutate(Functional = as.character(Functional),
+              Functional = case_when(Functional %in% c("Min1","Min2", "Mod") ~ "Min",
+                                     Functional == "Typ" ~ "Typ",
+                                     TRUE ~ "Maj"),
+              Functional = factor(Functional,
+                                  levels = c("Typ","Min","Maj")))
+
+full <- test_recipe(myrecipe)
+```
+
+
+
+### Numericals to Categoricals
+
+Some of the columns that are numerical could be seen as factors instead:
+
+MSSubClass identifies the type of dwelling involved in the sale. It is coded as a numerical variable but is really categorical.
+
+```{r num_to_cat1, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot(aes(MSSubClass,SalePrice))+
+  geom_point()+
+  theme_light()
+```
+
+MoSold and YrSold give details about the date when the house was sold.
+
+```{r num_to_cat2, echo=FALSE, fig.align="center", out.width="50%"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  dplyr::select(MoSold,YrSold,SalePrice) %>%
+  pivot_longer(cols = -SalePrice,
+               names_to = "variables",
+               values_to = "values") %>%
+  mutate(values = factor(values)) %>%
+  ggplot() +
+  geom_boxplot(aes(values, SalePrice)) +
+  facet_wrap(~factor(variables), scales = "free_x") +
+  theme_light()
+```
+
+We correct these 3 variables to categoricals.
+
+```{r num_to_ca3, include=FALSE}
+
+myrecipe <- myrecipe %>%
+  step_mutate(MSSubClass = factor(MSSubClass,
+                                  levels = unique(MSSubClass))) %>%
+  step_num2factor(MoSold,
+                  levels = as.character(1:12)) %>%
+  step_num2factor(YrSold,
+                  transform = function(x) x - 2005, # starts at 1.
+                  levels = as.character(2006:2010))
+
+full <- test_recipe(myrecipe)
+```
+
+
+
+## Step 4: Feature engineering
+
+Let's group some of the variables together to see if they have a better impact on the SalePrice
+
+### 4.1 Total number of bathrooms
+
+Multiple variables describe the number of bathrooms in the houses:
+
+Let's group them together into a TotalBathrooms variable
+
+```{r bathrooms1}
+myrecipe <- myrecipe %>%
+  step_mutate(TotalBathrooms = BsmtFullBath + FullBath + 0.5 * ( BsmtHalfBath +HalfBath) )
+```
+
+```{r bathrooms2, echo=FALSE, fig.align="center", out.width="50%"}
+ggplot(full %>%
+         filter(!is.na(SalePrice)) %>%
+         mutate(TotalBathrooms = BsmtFullBath + FullBath + 0.5 * ( BsmtHalfBath +HalfBath)),
+       aes(TotalBathrooms,SalePrice)) +
+  geom_point()+
+  geom_smooth(method='lm', formula= y~x, col = "blue")+
+  theme_light()
+```
+
+
+### 4.2 House age, remodeled (y/n) and IsNew
+
+We put together the 3 variables concerning years: YearBuilt, YearRemodAdd and YrSold. Since the year of remodel is the same as the year built if there hasnt been any remodelling, we can separate the data if it has been remodeled or not. Same thing, we can calculate the age of the house when it was sold, and if it was "new", aka less than 2 years old.
+
+```{r age1}
+myrecipe <- myrecipe %>%
+  step_mutate(Age = as.numeric(as.character(YrSold)) - YearBuilt,
+              Remodeled = factor(case_when(YearRemodAdd == YearBuilt ~ "Y",
+                                           TRUE ~ "N")),
+              New = factor(case_when(Age < 2 ~ "Y",
+                                     TRUE ~ "N")))
+```
+
+```{r age2, echo=FALSE, fig.align="center"}
+df <- full %>%
+  filter(!is.na(SalePrice)) %>%
+  mutate(Age = as.numeric(as.character(YrSold)) - YearBuilt,
+         Remodeled = factor(case_when(YearRemodAdd == YearBuilt ~ "Y",
+                                      TRUE ~ "N")),
+         New = factor(case_when(Age < 2 ~ "Y",
+                                TRUE ~ "N")))
+
+ggarrange(ggplot(df,
+                 aes(Age,SalePrice)) +
+            geom_point()+
+            geom_smooth(method='lm', formula= y~x, col = "blue")+
+            theme_light(),
+          ggplot(df,
+                 aes(Remodeled ,SalePrice)) +
+            geom_boxplot()+
+            theme_light(),
+          ggplot(df,
+                 aes(New ,SalePrice)) +
+            geom_boxplot()+
+            theme_light())
+```
+
+
+### 4.3 Total Square feet
+
+Let's group all the housing area and the porch area.
+
+```{r porch1}
+myrecipe <- myrecipe %>%
+  step_mutate(PorchArea = WoodDeckSF + OpenPorchSF + EnclosedPorch + `3SsnPorch` + ScreenPorch,
+              TotalSquareFeet = GrLivArea + GarageArea + BsmtFinSF1 + BsmtFinSF2 + LowQualFinSF)
+```
+
+```{r porch2, echo=FALSE, fig.align="center"}
+df <- full %>%
+  filter(!is.na(SalePrice)) %>%
+  mutate(PorchArea = WoodDeckSF + OpenPorchSF + EnclosedPorch + `3SsnPorch` + ScreenPorch,
+         TotalSquareFeet = GrLivArea + GarageArea + BsmtFinSF1 + BsmtFinSF2 + LowQualFinSF + `1stFlrSF` + `2ndFlrSF`)
+
+ggarrange(ggplot(df,
+                 aes(PorchArea,SalePrice)) +
+            geom_point()+
+            geom_smooth(method='lm', formula= y~x, col = "blue")+
+            theme_light(),
+          ggplot(df,
+                 aes(TotalSquareFeet,SalePrice)) +
+            geom_point()+
+            geom_smooth(method='lm', formula= y~x, col = "blue")+
+            theme_light())
+```
+
+
+
+### 4.4 Bin categories that have large number of categories:
+
+When looking at the categorical variables, we see that some of them have a large number of categories, with small number of rows in each:
+
+```{r levels1}
+sapply(full %>%
+         dplyr::select(Neighborhood,
+                       MSSubClass,
+                       Exterior1st,
+                       Exterior2nd),
+       table)
+```
+
+```{r levels2, echo=FALSE, fig.align="center" }
+df = full %>%
+  filter(!is.na(SalePrice)) %>%
+  mutate(Neighborhood = reorder(Neighborhood, SalePrice, FUN=mean),
+         MSSubClass = reorder(MSSubClass, SalePrice, FUN=mean),
+         Exterior1st = reorder(Exterior1st, SalePrice, FUN=mean),
+         Exterior2nd = reorder(Exterior2nd, SalePrice, FUN=mean))
+ggarrange(ggplot(df) +
+            geom_boxplot(aes(Neighborhood,SalePrice))+
+            theme_light() +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)),
+          ggplot(df) +
+            geom_boxplot(aes(MSSubClass,SalePrice))+
+            theme_light(),
+          ggplot(df) +
+            geom_boxplot(aes(Exterior1st,SalePrice))+
+            theme_light()+
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)),
+          ggplot(df) +
+            geom_boxplot(aes(Exterior2nd,SalePrice))+
+            theme_light()+
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)))
+```
+
+
+
+```{r levels3}
+myrecipe <- myrecipe %>%
+  step_mutate(BinNeigh = case_when(Neighborhood %in% c("MeadowV","IDOTRR","BrDale") ~ "Low",
+                                   Neighborhood %in% c("StoneBr","NoRidge","NridgHt") ~ "High",
+                                   TRUE ~ "Med" ),
+              BinMSSub = case_when(MSSubClass %in% c("180","30","45") ~ "Low",
+                                   MSSubClass %in% c("120","60") ~ "High",
+                                   TRUE ~ "Med" ),
+              BinExt1 = case_when(Exterior1st %in% c("AsbShng","AsphShn",
+                                                     "CBlock","BrkComm") ~ "Low",
+                                  Exterior1st %in% c("VinylSd","CemntBd",
+                                                     "Stone","ImStucc") ~ "High",
+                                  TRUE ~ "Med" ),
+              BinExt2 = case_when(Exterior2nd %in% c("CBlock","AsbShng") ~ "Low",
+                                  Exterior2nd %in% c("VinylSd","CemntBd",
+                                                     "ImStucc","Other") ~ "High",
+                                  TRUE ~ "Med" ) )
+```
+
+```{r levels4, echo=FALSE, fig.align="center" }
+df = full %>%
+  filter(!is.na(SalePrice)) %>%
+  mutate(BinNeigh = case_when(Neighborhood %in% c("MeadowV","IDOTRR","BrDale") ~ "Low",
+                              Neighborhood %in% c("StoneBr","NoRidge","NridgHt") ~ "High",
+                              TRUE ~ "Med" ),
+         BinMSSub = case_when(MSSubClass %in% c("180","30","45") ~ "Low",
+                              MSSubClass %in% c("120","60") ~ "High",
+                              TRUE ~ "Med" ),
+         BinExt1 = case_when(Exterior1st %in% c("AsbShng","AsphShn",
+                                                "CBlock","BrkComm") ~ "Low",
+                             Exterior1st %in% c("VinylSd","CemntBd",
+                                                "Stone","ImStucc") ~ "High",
+                             TRUE ~ "Med" ),
+         BinExt2 = case_when(Exterior2nd %in% c("CBlock","AsbShng") ~ "Low",
+                             Exterior2nd %in% c("VinylSd","CemntBd",
+                                                "ImStucc","Other") ~ "High",
+                             TRUE ~ "Med" ))%>%
+  step_mutate(BinNeigh = factor(BinNeigh,
+                                levels = c("High","Med","Low")),
+              BinMSSub = factor(BinMSSub,
+                                levels = c("High","Med","Low")),
+              BinExt1 = factor(BinExt1,
+                               levels = c("High","Med","Low")),
+              BinExt2 = factor(BinExt2,
+                               levels = c("High","Med","Low")))
+
+ggarrange(ggplot(df) +
+            geom_boxplot(aes(BinNeigh,SalePrice))+
+            theme_light() +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)),
+          ggplot(df) +
+            geom_boxplot(aes(BinMSSub,SalePrice))+
+            theme_light(),
+          ggplot(df) +
+            geom_boxplot(aes(BinExt1,SalePrice))+
+            theme_light()+
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)),
+          ggplot(df) +
+            geom_boxplot(aes(BinExt2,SalePrice))+
+            theme_light()+
+            theme(axis.text.x = element_text(angle = 30, hjust = 1)))
+```
+
+### 4.5 Center and Scale the numerical values
+
+We center and Scale the numerical values, except the output.
+It will help with the columns with outliers
+
+```{r center_scale1}
+myrecipe <- myrecipe  %>%
+  step_center(all_numeric(), - all_outcomes(),-Id) %>% # to standardize the dataset
+  step_scale(all_numeric(), -all_outcomes(),-Id)
+
+
+full <- test_recipe(myrecipe)
+```
+
+
+### 4.6 'Other' level
+
+In some factors, when there are categories with a low volume of data ( < 10%), we can create a new category called "Other".
+
+We are not updating the factors we already worked on above in this section 4.
+
+```{r other 1}
+full %>%
+  select_if(is.factor) %>%
+  dplyr::select(-MSSubClass, - Remodeled, -New,
+                - Neighborhood, -Exterior1st, -Exterior2nd,
+                -BinNeigh, -BinMSSub, -BinExt1, -BinExt2) %>%
+  select_if(function(x){
+    sum( table(x) < nrow(full) * 0.1) > 1 & length(table(x))>2 }) %>%
+  map(table)
+```
+
+```{r center_scale2, include=FALSE}
+cat_other <- full %>%
+  select_if(is.factor) %>%
+  dplyr::select(- MSSubClass, - Remodeled, -New,
+                - Neighborhood, -Exterior1st, -Exterior2nd,
+                -BinNeigh, -BinMSSub, -BinExt1, -BinExt2) %>%
+  select_if(function(x){
+    sum( table(x) < nrow(full) * 0.1) > 1 & length(table(x))>2 }) %>%
+  names()
+
+myrecipe <- myrecipe  %>%
+  step_other(all_of(cat_other),
+             threshold = 0.1,
+             other = "other")
+
+
+full <- test_recipe(myrecipe)
+```
+
+
+
+
+
+
+## Step 5: Visualisation of variable importance
+
+
+
+```{r}
+numericVars <- which(sapply(full, is.numeric)) #index vector numeric variables
+factorVars <- which(sapply(full, is.factor)) #index vector factor variables
+cat('After feature engineering, we have',
+    length(numericVars), 'numeric variables, and',
+    length(factorVars), 'categoric variables.\n')
+```
+
+### 5.1 Correlation to SalePrice
+
+When looking at the numerical variables, 18 have high correlation with SalePrice:
+
+```{r corr1, echo=FALSE,out.width = "100%", fig.align="center" }
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  select_if(is.numeric) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  filter(abs(SalePrice)>0.5) %>%
+  arrange(desc(SalePrice)) %>%
+  select_at(rownames(.)) %>%
+  as.matrix() %>%
+  corrplot::corrplot.mixed(tl.col="black", tl.pos = "lt",number.cex=0.5)
+```
+
+From the correlation matrix, it is clear that the multicollinearity is an issue in this analysis and dataset.
+
+Example: GarageCars and GarageArea have a very high (88%) correlation and both have a high correlation to SalePrice. It may be a good idea to work on that later one.
+
+If we look at the two variables that have the highest correlation to SalePrice , we have
+
+```{r , echo=FALSE, out.width = "75%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  ggplot(aes(OverallQual, SalePrice))+
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x, col = "blue")+
+  theme_light()
+
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  mutate(labels = case_when(TotalSquareFeet >= quantile(TotalSquareFeet,0.999) ~ rownames(.),
+                            TRUE ~ ""),
+         colour = case_when(TotalSquareFeet >= quantile(TotalSquareFeet,0.999) ~ "red",
+                            TRUE ~ "black")) %>%
+  ggplot(aes(TotalSquareFeet, SalePrice, col = colour))+
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x, col = "blue") +
+  geom_text(aes(label =labels), nudge_x = 1, col = "red")+
+  theme_light()+
+  scale_colour_manual(values = c("black","red")) +
+  theme(legend.position = "none")
+```
+
+As we can see, two points with ID 524 and 1299 look quite strange: they have a very high TotalSquareFeet but low sale price.
+
+By looking at the profiles we see that they are partial sales. But when we looked before on SaleCondition impact on SalePrice, the "Partial" value didnt seem to have a negative impact. We reserve our jugement on these 2 profiles and we may need to remove them later on.
+
+
+
+When testing the categorical variables with a kruskal test, 8 variables only have a p-value higher than 0.02:
+
+```{r}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  select_if(is.factor) %>%
+  map(function(x){kruskal.test(SalePrice ~ x,
+                               data = full%>% filter(!is.na(SalePrice)) )$p.value}) %>%
+  as.data.frame() %>%
+  pivot_longer(cols = everything(),
+               names_to = "Category",
+               values_to = "kruskal_pvalue") %>%
+  arrange(-kruskal_pvalue) %>%
+  filter(kruskal_pvalue > .02)
+```
+
+Thus it may be a good idea to remove them later on, before training the model(s).
+
+
+
+
+### 5.2 Variable importance with elastic net and random forest
+
+
+Although the correlations and kruskal tests are giving a good overview of the most important variables (+ some first view on the multi collinearity), let's get another overview of the most important variables, including the categorical variables, before moving on to visualization.
+
+To do that, we check the variables importance with 2 models, to look at the top 20% of variables:
+
+- A quick random forest model with 100 trees
+- A LASSO model
+
+```{r, out.width = "75%", fig.align="center"}
+set.seed(12345)
+randomForest::randomForest(x=full %>%
+                             filter(!is.na(SalePrice)) %>%
+                             dplyr::select(- SalePrice),
+                           y=full$SalePrice[!is.na(full$SalePrice)],
+                           ntree=100,
+                           importance=TRUE) %>%
+  randomForest::importance(.) %>%
+  as.data.frame() %>%
+  mutate(Variables = row.names(.)) %>%
+  rename(MSE = '%IncMSE') %>%
+  arrange(-MSE) %>%
+  filter(MSE >= quantile(.$MSE,0.8)) %>%
+  ggplot(.,
+         aes(x=reorder(Variables, MSE),
+             y=MSE)) +
+  geom_bar(stat = 'identity') +
+  labs(x = 'Variables',
+       y= '% increase MSE if randomly permuted') +
+  coord_flip()  +
+  theme(legend.position="none",
+        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Random Forest Variable importance") +
+  theme_light()
+```
+
+```{r, out.width = "75%", fig.align="center"}
+
+x_vars <- model.matrix(SalePrice~. , full %>%
+                         filter(!is.na(SalePrice)))[,-1]
+y_var <- full$SalePrice[!is.na(full$SalePrice)]
+lambda_seq <- 10^seq(2, -2, by = -.1)
+set.seed(12345)
+cv_output <- glmnet::cv.glmnet(x_vars,
+                               y_var,
+                               alpha = 1,
+                               lambda = lambda_seq,
+                               nfolds = 10)
+set.seed(12345)
+glmnet::glmnet(x_vars,
+               y_var,
+               alpha=1,
+               lambda = cv_output$lambda.min) %>%
+  coef() %>%
+  as.matrix() %>%
+  data.frame() %>%
+  mutate(Variables = row.names(.)) %>%
+  rename(coeff = s0) %>%
+  arrange(-coeff) %>%
+  filter(abs(coeff) >= quantile(abs(.$coeff),0.8),
+         coeff > 0,
+         Variables != "(Intercept)") %>%
+  ggplot(.,
+         aes(x=reorder(Variables, coeff),
+             y=coeff)) +
+  geom_bar(stat = 'identity') +
+  labs(x = 'Dummy Variables',
+       y= 'LASSO Coefficient') +
+  coord_flip() +
+  theme_light() +
+  theme(legend.position="none",
+        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("LASSO Variable importance")
+```
+
+We can see that some variables are seen in both plots, like Neighborhood, OverallQual or TotalSquareFeet, but we do have variables are are more important for one model than for the other. An example is 1stFlrSF which is listed as the 4th most important variable for the random forest model, while it is much less important for the LASSO model.
+
+
+
+## Step 6: Removing dataset
+
+### 6.1 binned variables created in step 4
+
+When looking at the number of bathrooms in the house, we see that the TotalBathrooms variable has a higher correlation to SalePrice than each of its components. The next one would have been FullBath, but it is highly correlated to TotalBathrooms.  The other 3 are lowly correlated to SalePrice. We remove all of them and keep only TotalBathrooms.
+
+```{r removing1, echo=FALSE, out.width = "50%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  select_if(is.numeric) %>%
+  select(TotalBathrooms, BsmtFullBath , FullBath , BsmtHalfBath ,HalfBath,
+         SalePrice)  %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  arrange(desc(SalePrice)) %>%
+  select_at(rownames(.)) %>%
+  as.matrix() %>%
+  corrplot::corrplot.mixed(tl.col="black", tl.pos = "lt",number.cex=0.5)
+```
+
+As for the different numerical variables related to Age, we can see that Age and YearBuilt are perfectly correlated, which makes a lot of sense. We are removing YearBuilt and YearRemodAdd from the dataset.
+
+```{r removing2, echo=FALSE, out.width = "50%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice))  %>%
+  select(Age, YearRemodAdd, YearBuilt, SalePrice)  %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  arrange(desc(SalePrice)) %>%
+  select_at(rownames(.)) %>%
+  as.matrix() %>%
+  corrplot::corrplot.mixed(tl.col="black", tl.pos = "lt",number.cex=0.5)
+```
+
+Concerning the numerical variables related to living or Porch Area, we see that the new variables created (PorchArea and TotalSquareFeet) are more correlated to SalePrice than each of their components. We will remove the components from the training dataset.
+
+```{r removing3, echo=FALSE, out.width = "50%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice)) %>%
+  select_if(is.numeric) %>%
+  select(PorchArea , WoodDeckSF , OpenPorchSF , EnclosedPorch ,`3SsnPorch` ,
+         ScreenPorch, TotalSquareFeet , GrLivArea , GarageArea ,
+         BsmtFinSF1 , BsmtFinSF2 , LowQualFinSF, `1stFlrSF`, `2ndFlrSF`,
+         SalePrice)  %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  arrange(desc(SalePrice)) %>%
+  select_at(rownames(.)) %>%
+  as.matrix() %>%
+  corrplot::corrplot.mixed(tl.col="black", tl.pos = "lt",number.cex=0.5)
+```
+
+Finally, for the binning categories, while the non-binned categories seem to have a lower p-value, all of the p-values are significant. We will keep them for now.
+
+```{r removing 4, include=FALSE}
+myrecipe <- myrecipe %>%
+  step_rm(BsmtFullBath , FullBath , BsmtHalfBath ,HalfBath,
+          YearRemodAdd, YearBuilt,
+          WoodDeckSF , OpenPorchSF , EnclosedPorch ,`3SsnPorch`, ScreenPorch,
+          GrLivArea , GarageArea , BsmtFinSF1 , BsmtFinSF2 , LowQualFinSF,
+          `1stFlrSF`, `2ndFlrSF`)
+
+full <- test_recipe(myrecipe)
+```
+
+
+### 6.2 highly correlated variables
+
+As seen above, we have a lot of highly correlated variables in the dataset. We will look at the variables that are highly correlated to each other and remove the one which has the lowest correlation to Sale Price. If we look at the first 20 highly correlated variables we have the following:
+
+```{r correlation1, echo=FALSE}
+
+df <- full %>%
+  filter(!is.na(SalePrice))  %>%
+  select_if(is.numeric) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame()
+
+for(i in 1:ncol(df)){
+  for(j in 1:i){
+    df[j,i] = NA
+  }
+}
+
+df1 <- df %>%
+  mutate(base = rownames(.)) %>%
+  pivot_longer(cols = -base,
+               names_to = "correlated_to",
+               values_to = "correlation")%>%
+  filter(!is.na(correlation))
+
+df1 %>%
+  filter(base != correlated_to,
+         correlated_to != "SalePrice",
+         base != "SalePrice",
+         correlation > 0.5) %>%
+  arrange(-correlation) %>%
+  head(20)
+```
+
+We can see that many variables on the same topic, like Garage or Basement, are highly correlated, which makes a lot of sense. When we look at these variables' correlation to SalePrice, we have the following:
+
+```{r echo=FALSE}
+correlated <- df1 %>%
+  filter(base != correlated_to,
+         correlated_to != "SalePrice",
+         base != "SalePrice",
+         correlation > 0.5) %>%
+  arrange(-correlation) %>%
+  head(20) %>%
+  select(-correlation) %>%
+  as.matrix() %>%
+  as.vector() %>%
+  unique()
+
+df1 %>%
+  filter( (base == "SalePrice" &
+             correlated_to %in% correlated) |
+            (correlated_to == "SalePrice" &
+               base %in% correlated) ) %>%
+  arrange(-correlation)
+```
+
+From that, we see that
+- GarageQual has a higher correlation than GarageCond and GarageYrBlt
+- PoolQC has a higher correlation than PoolArea
+- FireplaceQu has a higher correlation than Fireplaces
+- OverallQual has a higher correlation than ExterQual, which has higher correlation than KitchenQual
+- TotRmsAbvGrd has a higher correlation than BedroomAbvGr
+- BsmtQual has a higher correlation than BsmtCond
+
+We remove these variables which have high correlation with other variables and low(er) correlation with SalePrice.
+
+```{r include=FALSE}
+drop_variables <- c('PoolArea',
+                    'GarageYrBlt', 'GarageCond',
+                    'Fireplaces',
+                    'ExterQual','KitchenQual','BedroomAbvGr',
+                    'TotalBsmtSF','BsmtCond' )
+
+
+myrecipe <- myrecipe %>%
+  step_rm(all_of(drop_variables))
+
+full <- test_recipe(myrecipe)
+```
+
+
+### 6.3 outliers
+
+We sawe earlier that 2 rows seem to have very high values for the total square feet while the sale price stays not very high. Let's check these rows:
+
+```{r}
+full[c(524,1299),] %>% as.data.frame()
+```
+
+Both of them are new built, with good quality in general and high size. It is probably an error in the dataset.
+
+We remove the two rows containing these profiles.
+
+```{r include=FALSE}
+myrecipe <- myrecipe %>%
+  step_filter(!Id %in% c(524,1299))
+```
+
+
+### 6.4 Near- zero variance
+
+By looking at the categorical variables, we see that 6 of them have a near zero variance. In decreasing order of freqRation, we have: Utilities, Street, Condition2, RoofMatl, Heating and MiscFeature.
+
+
+```{r categ_nzv}
+full %>%
+  select_if(is.factor) %>%
+  caret::nearZeroVar(.,
+                     saveMetrics = TRUE) %>%
+  rownames_to_column() %>%
+  # filter(nzv) %>%
+  arrange(-freqRatio)
+```
+
+
+```{r categ_nz2, echo=FALSE, out.width = "50%", fig.align="center"}
+full %>%
+  filter(!is.na(SalePrice))  %>%
+  select_at(all_of(c(full %>%
+                       select_if(is.factor) %>%
+                       caret::nearZeroVar(.,
+                                          saveMetrics = TRUE) %>%
+                       rownames_to_column() %>%
+                       filter(nzv) %>%
+                       arrange(-freqRatio) %>%
+                       .$rowname,"SalePrice"))) %>%
+  pivot_longer(cols = -SalePrice,
+               names_to = "variables",
+               values_to = "values") %>%
+  ggplot() +
+  geom_boxplot(aes(values, SalePrice)) +
+  facet_wrap(~factor(variables), scales = "free_x") +
+  theme_light()
+```
+
+We are removing the 3 worst variables: Utilities, Street, and Condition2.
+
+```{r include=FALSE}
+myrecipe <- myrecipe %>%
+  step_rm(Street, Utilities, Condition2)
+```
+
+
+
+
+# Step 7 Dummy variables
+
+Finally, before creating any model, we transform all the categorical into dummy variables. And remove the Id column as it won't be necessary.
+
+```{r include=FALSE}
+myrecipe <- myrecipe %>%
+  step_dummy(all_nominal(),
+             one_hot = TRUE) %>%
+  step_rm(Id)
+
+full <- test_recipe(myrecipe)
+```
+
+
+Here is the summary of the final training dataset:
+
+```{r}
+summary(full)
+```
+

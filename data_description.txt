@@ -419,7 +419,7 @@ GarageType: Garage location
        CarPort	Car Port
        Detchd	Detached from home
        NA	No Garage
-		
+
 GarageYrBlt: Year garage was built
 		
 GarageFinish: Interior finish of the garage
