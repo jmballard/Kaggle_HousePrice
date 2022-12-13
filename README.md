@@ -1,6 +1,18 @@
 # Kaggle_HousePrice
 
-The House Price competition from Kaggle
+## Motivations and goals of this project
+
+The goal of this project is to predict the sale price of a house depending on different factors.
+
+Specifically, I was interested into answering the following 3 questions:
+
+1. Is having a basement having an impact on the price of a house?
+2. Are the new build cheaper than older houses?
+3. What are the most important features for our model?
+
+The data used was from the House Price competition from Kaggle.
+
+## Libraries used
 
 ## Folder's description
 
@@ -71,6 +83,7 @@ The Score from Kaggle is 0.13330 of RMSE on the log(SalePrice) for the XGB model
 I ranked on the top third around 3247, which is better than before (3700) but it can be improved!
 
 
+## Answers to the questions
 
 
 ## Ideas of improvement
@@ -85,3 +98,8 @@ There are many things that we could have done for the pre-processing of our data
 - We could step_interact( ~ x1:x2)  to add interactions
 - We could test other models
 
+## Links
+
+Kaggle competition: 
+
+Medium article: 
