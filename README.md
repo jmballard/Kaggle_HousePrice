@@ -1,61 +1,114 @@
 # Kaggle_HousePrice
 
-## Motivations and goals of this project
 
-The goal of this project is to predict the sale price of a house depending on different factors.
+## Table of contents
 
-Specifically, I was interested into answering the following 3 questions:
+- [Motivations](#motivations)
+- [Packages used](#packages_used)
+- [Files](#files)
+
+## Motivations and goals of this project <a name="motivations"></a>
+
+As we all know in the UK, the price of living has been increasing a lot these past years. And rent is ever more expensive. Thus, buying a house could be seen as a good idea on the long term.
+
+But buying a house is expensive, if not the most expensive thing you may have to buy in your live.
+
+I have been looking at buying a house for the past months and I have seen that all the houses have very varying prices. I got then curious to look at what could possibly impact the price of a house.
+
+In Kaggle, there is a competition relative to the price of houses. The data used for this competition is a modernized and expanded version of the Boston Housing dataset. Though not english, this dataset is complete enough that I'll use it for this analysis. It will give us an idea of which features in a house are having the most impact on its price.
 
 1. Is having a basement having an impact on the price of a house?
 2. Are the new build cheaper than older houses?
 3. What are the most important features for our model?
 
-The data used was from the House Price competition from Kaggle.
+We will use RMSE as feature to check the model's quality.
 
-## Libraries used
+## Packages used <a name="packages_used"></a>
 
-## Folder's description
+- pandas 
+- numpy 
+- matplotlib 
+- seaborn
+- pylab
+- scipy
+- sklearn
+- xgboost
+
+
+## Files <a name="files"></a>
 
 This folder contains the following files important for the analysis:
 
-- train.csv - the training set
-- test.csv - the test set
-- data_description.txt - full description of each column, originally prepared by Dean De Cock but lightly edited to match the column names used here
-- Modelling.R - the file containing the preprocessing and modelling code.
-- EDA.Rmd - Exploratory analysis code explaining all the process behind the preprocessing and modelling done in the Modelling.R file.
 
-On top of these files we have:
+Here is the content of this repo:
 
-- .gitignore - for the git commit
-- .Rhistory - to keep memory of the R code that ran
-- Kaggle_HousePrice.Rproj - the R project
-- workspace.code-workspace - to use with VScode
+```text
+
+- data
+|- data_description.txt  # description of features
+|- sample_submission.csv  # sample of Kaggle submission
+|- train.csv  # train dataset
+|- test.csv  # test dataset
+
+- R analysis
+|- EDA.Rmd # EDA done in R
+|- Modelling.R # R modelling
+
+- analysis_notebook.ipynb
+- LICENSE
+- README.md
+- .gitignore
+
+```
 
 
 ## Analysis description
 
-### Step 1: Descriptive analysis and pre-processing
+### Step 0: Sourcing the files
 
-Use the EDA file to do all the research behind the pre-processing.
-
-We pre-process the dataset following the analysis, then create dummy variables from all the factors left. We split the full dataset into the training and testing datasets depending if they contain a value for SalePrice or not.
+We sourced the datasets and joined them together.
 
 
+### Step 1: Exploring the output/target column
 
-### Step 2: XGBoost and elastic net
+In that section, we looked at the distribution of target values, and then log-transformed it.
 
-We create a function "model" which takes a workflow, a cv, a set of parameters to tune, a size for CV and a set of metrics to:
 
-1. Tune the hyper parameters
-2. Plot the average metrics by parameters
-3. Select the best model, update the workflow
-4. plot the feature importance
-5. Train the final model
-6. Predict on the training dataset, calculate the rmse and plot the predictions against real values
+### Step 2: Missing values
 
-#### 2.1 XGB model
+In this section, we looked at all features having missing values and filled them with either specific values or a KNN imputer.
 
-The best xgb model is using min_n = 2 and tree_depth = 4. It has a rmse of 0.0415.
+### Step 3: Change variable type
+
+We needed to correct some numerical features that needed to be used as categorical ones.
+
+### Step 4: Feature engineering
+
+In this section, we created new features:
+
+- total number of bathrooms
+- house age
+- remodeled flag
+- is new flag
+- total square feet
+
+### Step 5: Outliers
+
+We have found during our analysis that some profiles needed to be removed.
+
+### Step 6: One-Hot Encoding
+
+Due to us using a XGBoost model, we needed to transform all of our categorical features into dummy variables.
+
+
+### Step 7: Modelling - XGBoost
+
+The best xgb model is using :
+- 'eta': 0.1, 
+- 'gamma': 0.01, 
+- 'max_depth': 5
+
+min_n = 2 and tree_depth = 4. It has a RMSE of 0.0415.
 
 The Highest feature in the feature importance check are, in order:
 
@@ -64,42 +117,36 @@ The Highest feature in the feature importance check are, in order:
 - Age, which is the age of the house when sold.
 
 
-#### 2.2 Elastic net
+### Step 8: Answers to the questions
 
-The best elastic net model is using penalty = 0.00260417970747938 and mixture = 0.987178097013384. It has a rmse of 0.1064.
+**Q1: Is having a basement having an impact on the price of a house?**
 
-The Highest feature in the feature importance check are, in order:
+When looking at the list of important features above, we see that a Basement feature appears only at the bottom of the list, meaning that it doesn't seem to be seen as an important feature.
 
-- Exterior1st
-- TotalSquareFeet
-- Neighborhood
+**Q2: Are the new build cheaper than older houses?**
 
+When looking at the boxplots above, we see that the prices are higher on average for new houses
 
-### Step 3: Predicting on Test file
-We predict the prices using the XGB model, the Elastic Net model and an ensemble model averaging the results.
+**Q3: What are the most important features for our model?**
 
-The Score from Kaggle is 0.13330 of RMSE on the log(SalePrice) for the XGB model, 0.13400 for the Elastic net model and 0.12888 for the ensemble model without giving any weight difference between the 2 models.
+When looking at the list of important features we see that the most important feature by far is the overall quality of a house, which makes sense. The better the house, the higher the price.
 
-I ranked on the top third around 3247, which is better than before (3700) but it can be improved!
-
-
-## Answers to the questions
+The next one is the total size of the house, which makes sense too as the bigger the house, the higher the price.
 
 
 ## Ideas of improvement
 
 There are many things that we could have done for the pre-processing of our datasets:
 
-- We could use step_spatialsign instead of removing the 2 rows of outliers.
-- We could use the step_nzv function instead of how it was done. We didnt, here, because it seems that it was removing good columns.
+- investigate a possible english dataset to see if we have similar features' impact. For example: are new built having the same impact in England with respect to what we have found here?
+- Investigate the houses that had low price but very high square feet.
+- We could keep the outliers but transform them in some way.
 - We could do a PCA step to remove the multicolinearity instead of just removing columns.
 - We could log transform the numerical predictors that are skewed by checking their skewness
-- We could step_ordinalscore() to replace ordered factors first, before the dummy step
-- We could step_interact( ~ x1:x2)  to add interactions
 - We could test other models
 
 ## Links
 
-Kaggle competition: 
+Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview
 
-Medium article: 
+Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
