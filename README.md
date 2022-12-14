@@ -3,9 +3,21 @@
 
 ## Table of contents
 
+- [Links](#links)
 - [Motivations](#motivations)
 - [Packages used](#packages_used)
 - [Files](#files)
+- [Analysis summary](#analysis)
+- [Results](#results)
+- [Comparison](#comparison)
+- [Improvement ideas](#improvement)
+
+## Links <a name="links"></a>
+
+Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview
+
+Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
+
 
 ## Motivations and goals of this project <a name="motivations"></a>
 
@@ -92,7 +104,7 @@ Here is the content of this repo:
 ```
 
 
-## Analysis description
+## Analysis description <a name="analysis"></a>
 
 ### Step 0: Sourcing the files
 
@@ -137,7 +149,7 @@ The best parameters are:
 - gamma: 0
 - max_depth: 5
 
-## Results
+## Results <a name="results"></a>
 
 The RMSE of the tuned model is 1.1379.
 
@@ -149,7 +161,7 @@ The Highest feature in the feature importance check are, in order:
 - OverallQual, which is the variable on the Overall quality of the house
 - Age, which is the age of the house when sold.
 
-## Comparison table
+## Comparison table <a name="comparison"></a>
 
 We got the following results from our models
 
@@ -163,7 +175,7 @@ The tuned model that we created above seems to improve on our baseline model. Wi
 While not perfect, this is already a good starting point for improvement.
 
 
-## Ideas of improvement
+## Ideas of improvement <a name="improvement"></a>
 
 There are many things that we could have done for the pre-processing of our datasets:
 
@@ -173,9 +185,3 @@ There are many things that we could have done for the pre-processing of our data
 - We could do a PCA step to remove the multicolinearity instead of just removing columns.
 - We could log transform the numerical predictors that are skewed by checking their skewness
 - We could test other models
-
-## Links
-
-Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview
-
-Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
