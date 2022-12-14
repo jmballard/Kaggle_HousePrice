@@ -9,19 +9,47 @@
 
 ## Motivations and goals of this project <a name="motivations"></a>
 
+### High-level overview
+
 As we all know in the UK, the price of living has been increasing a lot these past years. And rent is ever more expensive. Thus, buying a house could be seen as a good idea on the long term.
 
 But buying a house is expensive, if not the most expensive thing you may have to buy in your live.
 
 I have been looking at buying a house for the past months and I have seen that all the houses have very varying prices. I got then curious to look at what could possibly impact the price of a house.
 
+### Description of input data
+
 In Kaggle, there is a competition relative to the price of houses. The data used for this competition is a modernized and expanded version of the Boston Housing dataset. Though not english, this dataset is complete enough that I'll use it for this analysis. It will give us an idea of which features in a house are having the most impact on its price.
 
-1. Is having a basement having an impact on the price of a house?
-2. Are the new build cheaper than older houses?
-3. What are the most important features for our model?
+The data is comprised of two csvs: train and test. The latter does not contain SalePrices, and will be used in the Kaggle competition to test the quality of our model
 
-We will use RMSE as feature to check the model's quality.
+### Strategy for solving the problem
+
+The two main files from Kaggle are separated. We will concatenate them to make sure we have a full view on the data and its feature's distribution.
+
+We will first do some EDA and Data preprocessing, as the data hasn't been cleaned. Due to the target having a right tail, we will log transform it.
+
+- During the data pre-processing, we will:
+- Fill the missing values either manually or with a KNN imputer
+- Remove outliers
+- Create new features
+- Use a One-Hot Encoder to encode the categorical features.
+
+Once done, we will use a XGBoost model to predict the Sale Price with a GridSearchCV to tune the parameters of the model.
+
+The model, in particular, that I have chosen is a XGBRegressor as the target is numerical (SalePrice). The objective parameter of the XGB will stay the default (reg:squarederror)
+
+### Expected solution
+
+We expect the model to predict the SalePrice, with some features to be clearly seen as important:
+
+For example, the quality of the house, its size, the area where the house is placed or the age of the house should be seen as
+
+### Metrics used
+
+As the target is numerical, we will use a regressor model with RMSE as our internal model.
+
+The final measure used to see the quality of our model will be the one used in Kaggle to rank their competitors.
 
 ## Packages used <a name="packages_used"></a>
 
@@ -55,6 +83,8 @@ Here is the content of this repo:
 |- Modelling.R # R modelling
 
 - analysis_notebook.ipynb
+- submission_tuned.csv
+- submission_xgb.csv
 - LICENSE
 - README.md
 - .gitignore
@@ -69,46 +99,49 @@ Here is the content of this repo:
 We sourced the datasets and joined them together.
 
 
-### Step 1: Exploring the output/target column
+### Step 1: EDA
 
-In that section, we looked at the distribution of target values, and then log-transformed it.
-
-
-### Step 2: Missing values
-
-In this section, we looked at all features having missing values and filled them with either specific values or a KNN imputer.
-
-### Step 3: Change variable type
-
-We needed to correct some numerical features that needed to be used as categorical ones.
-
-### Step 4: Feature engineering
-
-In this section, we created new features:
-
-- total number of bathrooms
-- house age
-- remodeled flag
-- is new flag
-- total square feet
-
-### Step 5: Outliers
-
-We have found during our analysis that some profiles needed to be removed.
-
-### Step 6: One-Hot Encoding
-
-Due to us using a XGBoost model, we needed to transform all of our categorical features into dummy variables.
+In that section, we looked in more details at the data and its columns. In particular, we looked at the distribution of target values, and then log-transformed it.
 
 
-### Step 7: Modelling - XGBoost
+### Step 2: Data Preprocessing
 
-The best xgb model is using :
-- 'eta': 0.1, 
-- 'gamma': 0.01, 
-- 'max_depth': 5
+In this section, we 
 
-min_n = 2 and tree_depth = 4. It has a RMSE of 0.0415.
+- looked at all features having missing values and filled them with either specific values or a KNN imputer.
+- corrected some numerical features that needed to be used as categorical ones.
+- created new features
+- removed outliers
+- used an One-Hot-Encoding method to encode the categorical features into dummy variables.
+
+
+### Step 3: Modelling - XGBoost
+
+Let's start by separating the training dataset from the test dataset. Once we have done that, we separate the train into 2 parts: the one that will be used for training and the one for validation. The validation dataset will contain 20% of the original train.csv file.
+
+As said in the beginning of this article, we are using a XGBoost model to try to predict our SalePrice target. The objective will stay the default using squared loss.
+
+When running a first XGBoost model, we got an RMSE on the validation sample of 1.13914. When submitting the results on Kaggle, we got a score of 0.14274. Let's see if we can improve on that with some tuning.
+
+### Step 4 : Hyper parameter tuning
+
+We will tune the following parameters with a GridSearchCV function:
+- eta
+- gamma
+- max_depth
+
+We create a XGBoost model with a GridSearch to tune the parameters eta, gamma and max_depth.
+
+The best parameters are:
+- eta: 0.1
+- gamma: 0
+- max_depth: 5
+
+## Results
+
+The RMSE of the tuned model is 1.1379.
+
+When submitting the model predictions to Kaggle, I got a score of 0.13647, which was better than what we had before.
 
 The Highest feature in the feature importance check are, in order:
 
@@ -116,22 +149,18 @@ The Highest feature in the feature importance check are, in order:
 - OverallQual, which is the variable on the Overall quality of the house
 - Age, which is the age of the house when sold.
 
+## Comparison table
 
-### Step 8: Answers to the questions
+We got the following results from our models
 
-**Q1: Is having a basement having an impact on the price of a house?**
+| Model  | RMSE in validation | Kaggle score | Kaggle rank |
+| ------------- | ------------- | ------------- | ------------- |
+| Baseline  | 1.139143  | 0.14274 | 2053 |
+| Tuned  | 1.137923  | 0.13647 | 1597 |
 
-When looking at the list of important features above, we see that a Basement feature appears only at the bottom of the list, meaning that it doesn't seem to be seen as an important feature.
+The tuned model that we created above seems to improve on our baseline model. With it, our leaderboard ranking in Kaggle jumped from 2053 to 1597.
 
-**Q2: Are the new build cheaper than older houses?**
-
-When looking at the boxplots above, we see that the prices are higher on average for new houses
-
-**Q3: What are the most important features for our model?**
-
-When looking at the list of important features we see that the most important feature by far is the overall quality of a house, which makes sense. The better the house, the higher the price.
-
-The next one is the total size of the house, which makes sense too as the bigger the house, the higher the price.
+While not perfect, this is already a good starting point for improvement.
 
 
 ## Ideas of improvement
