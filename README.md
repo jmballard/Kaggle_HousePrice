@@ -18,6 +18,7 @@ Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-re
 
 Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
 
+EBM documentation: https://interpret.ml/docs/ebm.html
 
 ## Motivations and goals of this project <a name="motivations"></a>
 
@@ -73,6 +74,7 @@ The final measure used to see the quality of our model will be the one used in K
 - scipy
 - sklearn
 - xgboost
+- interpret (for the EBM)
 
 
 ## Files <a name="files"></a>
