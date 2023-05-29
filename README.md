@@ -3,7 +3,6 @@
 
 ## Table of contents
 
-- [Links](#links)
 - [Motivations](#motivations)
 - [Packages used](#packages_used)
 - [Files](#files)
@@ -11,14 +10,9 @@
 - [Results](#results)
 - [Comparison](#comparison)
 - [Improvement ideas](#improvement)
-
-## Links <a name="links"></a>
-
-Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview
-
-Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
-
-EBM documentation: https://interpret.ml/docs/ebm.html
+- [Links](#links)
+- [License](#license)
+- [Status](#status)
 
 ## Motivations and goals of this project <a name="motivations"></a>
 
@@ -187,3 +181,39 @@ There are many things that we could have done for the pre-processing of our data
 - We could do a PCA step to remove the multicolinearity instead of just removing columns.
 - We could log transform the numerical predictors that are skewed by checking their skewness
 - We could test other models
+
+## Links <a name="links"></a>
+
+Kaggle competition: https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview
+
+Medium article: https://medium.com/@bronnimannj/what-really-impacts-the-price-of-a-house-adf713e3ad2f
+
+EBM documentation: https://interpret.ml/docs/ebm.html
+
+## License <a name="license"></a>
+
+MIT License
+
+Copyright (c) [2022] [Julie Ballard]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Project status  <a name="status"></a>
+
+This project is finishes

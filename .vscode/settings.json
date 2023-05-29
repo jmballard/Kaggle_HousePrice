@@ -1,0 +1,39 @@
+{
+    "workbench.colorCustomizations": {
+        "[Tokyo Night]": {
+            "activityBar.activeBackground": "#946b2d",
+            "activityBar.background": "#946b2d",
+            "activityBar.foreground": "#1d1509",
+            "activityBar.inactiveForeground": "#1d1509",
+            "activityBarBadge.background": "#3b2a12",
+            "activityBarBadge.foreground": "#fcfcfa",
+            "sideBar.background": "#1d1509",
+            "sideBar.foreground": "#bea681",
+            "sideBarSectionHeader.background": "#31230c",
+            "sideBarSectionHeader.foreground": "#fcfcfa",
+            "titleBar.activeBackground": "#0E1A40",
+            "titleBar.inactiveBackground": "#0E1A40",
+            "titleBar.activeForeground": "#fcfcfa",
+            "titleBar.inactiveForeground": "#fcfcfa",
+            "sideBarTitle.foreground": "#ded2c0",
+            "statusBar.background": "#0E1A40",
+            "statusBar.foreground": "#fcfcfa",
+            "tab.inactiveBackground": "#080f25",
+            "tab.activeBackground": "#222F5B",
+            "tab.hoverBackground": "#222F5B",
+            "tab.activeForeground": "#fcfcfa",
+            "tab.inactiveForeground": "#fcfcfa",
+            "editor.foreground": "#fcfcfa",
+            "editor.background": "#16161E",
+            "menu.selectionForeground": "#fcfcfa",
+            "input.background": "#946b2d",
+            "input.foreground": "#1d1509",
+            "input.placeholderForeground": "#1d1509",
+            "button.background": "#5d5d5d",
+            "scrollbarSlider.background": "#946b2d",
+            "scrollbarSlider.hoverBackground": "#946b2d",
+            "scrollbarSlider.activeBackground": "#946b2d"
+        }
+    },
+    "workbench.colorTheme": "Tokyo Night"
+}
